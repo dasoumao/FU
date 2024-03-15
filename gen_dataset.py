@@ -43,7 +43,7 @@ if __name__ == "__main__":
 
     
     # 获取数据
-    train_datasets, eval_datasets, dict_users = get_dataset(args=args, dataset=args.dataset, iid=args.iid, num_users=args.num_clients)
+    train_datasets, eval_datasets, dict_users = get_dataset(dataset=args.dataset, iid=args.iid, num_users=args.num_clients)
     
     # 目标客户端ID
     target_id = [0]

@@ -36,8 +36,10 @@ class Client(object):
         self.algorithm = args.algorithm
         self.dataset = args.dataset
         self.device = args.device
-        self.id = id  # integer
+        self.id = id  
         self.save_folder_name = args.save_folder_name
+        
+        # 是否有必要
         self.num_classes = args.num_classes
         self.train_samples = train_samples #训练样本个数
         self.batch_size = args.batch_size
@@ -48,15 +50,18 @@ class Client(object):
         self.privacy = args.privacy
         self.dp_sigma = args.dp_sigma
         self.protos = None
+        
         self.has_BatchNorm = False
         for layer in self.model.children():
             if isinstance(layer, nn.BatchNorm2d):
                 self.has_BatchNorm = True
                 break
 
+        #是否需要初始值
         self.train_time_cost = {'num_rounds': 0, 'total_cost': 0.0}
         self.send_time_cost = {'num_rounds': 0, 'total_cost': 0.0}
 
+        # 是否通过参数传递
         self.loss = nn.CrossEntropyLoss()
         # if self.args.optimizer == 'sgd':
         #     self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate,
@@ -71,35 +76,20 @@ class Client(object):
         )
         self.learning_rate_decay = args.learning_rate_decay
 
-    # def estimate_parameter_importance(self, trn_loader, model, num_samples):
-        # importance = {n: torch.zeros(p.shape).to(self.device) for n, p in model.named_parameters()}
-        # n_samples_batches = (num_samples // trn_loader.batch_size + 1) if num_samples > 0 \
-        #     else (len(trn_loader.dataset) // trn_loader.batch_size)
-        # model.train()
-        # model.to(self.device)
-        # for images, targets in itertools.islice(trn_loader, n_samples_batches):
-        #     images, targets = images.to(self.device), targets.to(self.device)
-        #     outputs = model(images)
-        #     loss = self.loss(outputs, targets)
-        #     # loss = torch.norm(outputs, p=2, dim=1).mean()
-        #     self.optimizer.zero_grad()
-        #     loss.backward()
-        #     self.optimizer.step()
-        #     for n, p in model.named_parameters():
-        #         importance[n] += p.grad.abs()
-        # n_samples = n_samples_batches * trn_loader.batch_size
-        # importance = {n: (p / n_samples) for n, p in importance.items()}
-        # return importance
+ 
     def estimate_parameter_importance(self, trainloader, model):
         trainloader = self.load_poi_data()
         importance = dict()
         for k, p in self.model.named_parameters():
             importance[k] = torch.zeros_like(p).to(self.device)
+        # 使用eval
         model.eval()
+        
         model.to(self.device)
         num_examples = 0
         for image_batch, label_batch in trainloader:
-            image_batch, label_batch = image_batch.to(self.device), label_batch.to(self.device)
+            image_batch.to(self.device)
+            label_batch.to(self.device)
             num_examples += image_batch.size(0)
             output = model(image_batch)
             loss = self.loss(output, label_batch)
@@ -137,22 +127,26 @@ class Client(object):
         # new_labels = torch.mean(all_predictions.float(), dim=1).long()  # 取预测标签的平均值作为新的标签
 
     def extract_features_from_dataloader(self, data_loader):
+        #使用eval
         self.model.eval()
+        
         self.model.to(self.device)
         all_features = []
         with torch.no_grad():
             for data in data_loader:
                 inputs, _ = data  # 假设 DataLoader 返回的数据是 (inputs, labels) 格式
-                inputs = inputs.to(self.device)  # 将数据移到设备上（根据你的设置）
+                inputs.to(self.device)  # 将数据移到设备上（根据你的设置）
                 features = self.model.base(inputs)
                 all_features.append(features.cpu())  # 将特征移动回 CPU（如果需要）
         all_features = torch.cat(all_features, dim=0)
         return all_features
+    
     def wd_distance(self, feature1, feature2):
         distribution1 = feature1.detach().cpu().numpy()
         distribution2 = feature2.detach().cpu().numpy()
         wd_distance = wasserstein_distance(distribution1.flatten(), distribution2.flatten())
         return wd_distance
+    
     # def compute_kl(pretrained_model, current_model, batch, device):
     #     """
     #     Compute *forward* KL as the normal utility loss.
@@ -182,7 +176,14 @@ class Client(object):
     #     prob_q = torch.nn.functional.softmax(normal_outputs.logits, -1)
     #     loss = -(prob_p * torch.log(prob_q + 1e-12)).sum(-1).mean()
     #     return loss
+    
     def load_target_test_data(self):
+        # 更高效
+        # def filter_dataset_by_label(dataset, label_to_filter):
+        #     indices = [i for i, (_, label) in enumerate(dataset) if label == label_to_filter]
+        #     # 使用索引创建一个新的子数据集
+        #     filtered_dataset = torch.utils.data.Subset(dataset, indices)
+        #     return filtered_dataset
         def filter_dataset_by_label(dataset, label_to_filter):
             filtered_data = []
             filtered_labels = []
@@ -265,11 +266,12 @@ class Client(object):
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
-    def targeteval(self):
+    def target_eval(self):
         if self.args.poi:
             target_data = load_npz(f'./data/{self.dataset}/client_{self.id}_poi_target_{self.args.target_label}_{self.args.ratio}.npz')
         else:
             target_data = load_npz(f'./data/{self.dataset}/client_{self.id}_clean_target_{self.args.target_label}_{self.args.ratio}.npz')
+        
         testloader = DataLoader(dataset=target_data, batch_size=len(target_data), drop_last=False, shuffle=False)
         self.model.to(self.device)
         self.model.eval()
@@ -284,16 +286,16 @@ class Client(object):
                 poi_correct_predictions += (torch.sum(torch.argmax(outputs, dim=1) == labels)).item()
                 poi_total_samples += labels.size(0)
         poi_accuracy = poi_correct_predictions * 1.0 / poi_total_samples
-        # print(predicted_labels_list)
         return poi_accuracy
     
-    def remaineval(self):
+    def remain_eval(self):
         if self.args.poi:
             npz_file = f'./data/{self.dataset}/client_{self.id}_poi_remain_{self.args.target_label}_{self.args.ratio}.npz'
             remain_data = load_npz(npz_file)
         else:
             npz_file = f'./data/{self.dataset}/client_{self.id}_clean_remain_{self.args.target_label}_{self.args.ratio}.npz'
             remain_data = load_npz(npz_file)
+        
         testloader = DataLoader(dataset=remain_data, batch_size=self.batch_size, drop_last=False, shuffle=False)
         self.model.to(self.device)
         self.model.eval()

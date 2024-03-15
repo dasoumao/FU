@@ -29,16 +29,22 @@ class clientAVG(Client):
         self.beta = args.beta  # 正则化项权重
         self.backup = None
 
+    
+    #
+    #下面的训练流程需要考察
     def train(self):
         trainloader = self.load_train_data()
         self.model.to(self.device)
         self.model.train()
+        
         if self.privacy:
             model_origin = copy.deepcopy(self.model)
             self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer, trainloader, self.dp_sigma)
+        
         start_time = time.time()
         for step in range(self.local_epochs):
             for i, (x, y) in enumerate(trainloader):
+                # 是否必要
                 if type(x) == type([]):
                     x[0] = x[0].to(self.device)
                 else:
@@ -49,10 +55,13 @@ class clientAVG(Client):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                
         if self.learning_rate_decay:
             self.learning_rate_scheduler.step()
+            
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
+        
         if self.privacy:
             eps, DELTA = get_dp_params(privacy_engine)
             print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
@@ -65,6 +74,7 @@ class clientAVG(Client):
         trainloader = self.load_poi_data()
         self.model.to(self.device)
         self.model.train()
+        
         if self.privacy:
             model_origin = copy.deepcopy(self.model)
             self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer,
@@ -73,6 +83,7 @@ class clientAVG(Client):
         for step in range(self.local_epochs):
             self.model.eval()
             for i, (x, y) in enumerate(trainloader):
+                # 是否必要
                 if type(x) == type([]):
                     x[0] = x[0].to(self.device)
                 else:
@@ -83,14 +94,18 @@ class clientAVG(Client):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-        remain_acc=self.remaineval()
+                
+        remain_acc=self.remain_eval()
         print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
-        target_acc = self.targeteval()
+        target_acc = self.target_eval()
         print('C{} Target_acc:{:.4f}'.format(self.id, target_acc))
+        
         if self.learning_rate_decay:
             self.learning_rate_scheduler.step()
+        
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
+        
         if self.privacy:
             eps, DELTA = get_dp_params(privacy_engine)
             print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
@@ -98,6 +113,7 @@ class clientAVG(Client):
                 param.data = param_dp.data.clone()
             self.model = model_origin
             self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
+    
     # def ptrain(self):
     #     trainloader = self.load_remain_data()
     #     # poiloader = self.load_target_data()
@@ -150,6 +166,7 @@ class clientAVG(Client):
         trainloader = self.load_remain_data()
         self.model.to(self.device)
         self.model.train()
+        
         if self.privacy:
             model_origin = copy.deepcopy(self.model)
             self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer,
@@ -157,6 +174,7 @@ class clientAVG(Client):
         start_time = time.time()
         for step in range(self.local_epochs):
             for i, (x, y) in enumerate(trainloader):
+                # 是否必要
                 if type(x) == type([]):
                     x[0] = x[0].to(self.device)
                 else:
@@ -167,14 +185,18 @@ class clientAVG(Client):
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-        remain_acc = self.remaineval()
+        
+        remain_acc = self.remain_eval()
         print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
-        target_acc = self.targeteval()
+        target_acc = self.target_eval()
         print('C{} Target_acc:{:.4f}'.format(self.id, target_acc))
+        
         if self.learning_rate_decay:
             self.learning_rate_scheduler.step()
+        
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
+        
         if self.privacy:
             eps, DELTA = get_dp_params(privacy_engine)
             print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
@@ -188,11 +210,14 @@ class clientAVG(Client):
         trainloader = self.load_remain_data()
         self.model.to(self.device)
         self.model.train()
+        
         if self.privacy:
             model_origin = copy.deepcopy(self.model)
             self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer,
                                                                                     trainloader, self.dp_sigma)
+        
         self.optimizer_ada = ada_hessain.AdaHessian(self.model.parameters())
+        
         start_time = time.time()
         for step in range(self.local_epochs):
             for i, (x, y) in enumerate(trainloader):
@@ -207,15 +232,18 @@ class clientAVG(Client):
                 loss.backward(create_graph=True)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 5, norm_type=2.0, error_if_nonfinite=False)
                 self.optimizer_ada.step()
-        remain_acc=self.remaineval()
+        
+        remain_acc=self.remain_eval()
         print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
-        target_acc = self.targeteval()
+        target_acc = self.target_eval()
         print('C{} Target_acc:{:.4f}'.format(self.id, target_acc))
 
         if self.learning_rate_decay:
             self.learning_rate_scheduler.step()
+        
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
+        
         if self.privacy:
             eps, DELTA = get_dp_params(privacy_engine)
             print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
@@ -237,14 +265,18 @@ class clientAVG(Client):
         # 备份模型
         self.backup = copy.deepcopy(self.model)
         self.backup.load_state_dict(self.model.state_dict())
+        
         self.model.train()  # 初始的全局模型训练模式
         self.model.to(self.device)
+        
         if self.privacy:
             model_origin = copy.deepcopy(self.model)
             self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer,
                                                                                     trainloader, self.dp_sigma)
+        
         self.backup.to(self.device)
         self.backup.eval()  # 备份的全局模型评估模式
+        
         start_time = time.time()
         for step in range(self.ul_epochs):
             correct = 0
@@ -306,12 +338,13 @@ class clientAVG(Client):
 
             if self.learning_rate_decay:
                 self.learning_rate_scheduler.step()
+            
             self.train_time_cost['num_rounds'] += 1
             self.train_time_cost['total_cost'] += time.time() - start_time
 
-        remain_acc=self.remaineval()
+        remain_acc=self.remain_eval()
         print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
-        target_acc = self.targeteval()
+        target_acc = self.target_eval()
         print('C{} Target_acc:{:.4f}'.format(self.id, target_acc))
         if self.privacy:
             eps, DELTA = get_dp_params(privacy_engine)
@@ -413,9 +446,9 @@ class clientAVG(Client):
                 self.model = model_origin
                 self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
 
-        remain_acc = self.remaineval()
+        remain_acc = self.remain_eval()
         print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
-        target_acc = self.targeteval()
+        target_acc = self.target_eval()
         print('C{} Target_acc:{:.4f}'.format(self.id, target_acc))
 
     def fliptrain(self):
@@ -472,9 +505,9 @@ class clientAVG(Client):
                 self.model = model_origin
                 self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
 
-        remain_acc = self.remaineval()
+        remain_acc = self.remain_eval()
         print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
-        target_acc = self.targeteval()
+        target_acc = self.target_eval()
         print('C{} Target_acc:{:.4f}'.format(self.id, target_acc))
 
 # 原始版本

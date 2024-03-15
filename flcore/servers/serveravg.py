@@ -20,26 +20,32 @@ random.seed(42)
 class FedAvg(Server):
     def __init__(self, args, times):
         super().__init__(args, times)
-        # 创建对象
+        
+        #待改进
+        # 创建客户端
         self.set_clients(clientAVG)
-        # 创建目标客户端id
-        self.target_clients()
+        # 设置投毒客户端id
+        self.set_target_clients()
+        
         if self.args.mode != 7:
             print("Create server and clients.")
             if self.args.poi:
-                print("Create poi data.")
+                print("Use poi data.")
             else:
-                print("Create clean data.")
+                print("Use clean data.")
         # print(f"\nJoin ratio / total clients: {self.join_ratio} / {self.num_clients}")
 
         self.Budget = []
 
     def poi_train(self):
+        # 保存随机生成的初始化模型，是否必要
         self.save_init_global_model()
+        
         begin = time.time()
         for i in range(self.global_rounds+1):
             s_t = time.time()
-            self.selected_clients = self.select_clients()
+            # 选择参与训练的模型
+            self.select_clients()
             self.send_models()
 
             if i%self.eval_gap == 0:
@@ -49,54 +55,28 @@ class FedAvg(Server):
             for client in self.selected_clients:
                 print(f"-----------client {client.id} starts training----------")
                 if client.id in self.target_id:
-                    # client.train()
                     client.ptrain() # 目标客户端
                 else:
                     client.train() # 剩余客户端
+                    
             self.receive_models()
+            
+            #待优化
             if self.dlg_eval and i%self.dlg_gap == 0:
                 self.call_dlg(i)
+                
             self.aggregate_parameters()
 
             self.Budget.append(time.time() - s_t)
             print('-'*25, 'time cost', '-'*25, self.Budget[-1])
 
-            end = time.time()
-            print('-' * 25, 'overall time cost', '-' * 25, end - begin)
+        end = time.time()
+        print('-' * 25, 'overall time cost', '-' * 25, end - begin)
 
-            if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
-                break
+            # 未使用
+            # if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
+            #     break
 
-        # for i in range(self.global_rounds+1):
-        #     s_t = time.time()
-        #     self.send_models()
-        #     if i%self.eval_gap == 0:
-        #         print(f"\n-------------Poi Round number: {i}-------------")
-        #         print("\nEvaluate global model")
-        #         self.evaluate()
-
-        #     for client in self.selected_clients:
-        #         print(f"-----------client {client.id} starts training----------")
-        #         if client.id in self.target_id:
-        #             client.ptrain() # 目标客户端
-        #         else:
-        #             client.train() # 剩余客户端
-
-        #     self.receive_models()
-
-        #     if self.dlg_eval and i%self.dlg_gap == 0:
-        #         self.call_dlg(i)
-
-        #     self.aggregate_parameters()
-
-        #     self.Budget.append(time.time() - s_t)
-        #     print('-'*25, 'time cost', '-'*25, self.Budget[-1])
-
-        #     end = time.time()
-        #     print('-' * 25, 'overall time cost', '-' * 25, end - begin)
-
-        #     if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
-        #         break
                 
         print("\nEvaluate global model.")
         self.evaluate()
@@ -114,11 +94,15 @@ class FedAvg(Server):
         self.save_global_model()
 
     def re_train(self):
+        '''
+        重新训练
+        '''
         begin = time.time()
         for i in range(self.global_rounds+1):
             s_t = time.time()
             self.selected_clients = self.select_clients()
             self.send_models()
+            
             if i%self.eval_gap == 0:
                 print(f"\n-------------Retrain Round number: {i}-------------")
                 print("\nEvaluate global model")
@@ -132,18 +116,20 @@ class FedAvg(Server):
                     client.train() # 剩余客户端
 
             self.receive_models()
+            
             if self.dlg_eval and i%self.dlg_gap == 0:
                 self.call_dlg(i)
+                
             self.aggregate_parameters()
 
             self.Budget.append(time.time() - s_t)
             print('-'*25, 'time cost', '-'*25, self.Budget[-1])
 
-            end = time.time()
-            print('-' * 25, 'overall time cost', '-' * 25, end - begin)
+        end = time.time()
+        print('-' * 25, 'overall time cost', '-' * 25, end - begin)
 
-            if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
-                break
+            # if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
+            #     break
 
         print("\nEvaluate global model.")
         self.evaluate()
@@ -161,6 +147,9 @@ class FedAvg(Server):
         self.save_global_model()
 
     def con_train(self):
+        '''
+        干净数据上继续训练
+        '''
         print("Load origin global model")
         self.load_model()
         
@@ -182,21 +171,25 @@ class FedAvg(Server):
                     client.remaintrain()  # 目标客户端
                 else:
                     client.train()  # 剩余客户端
-            end = time.time()
+            
             self.receive_models()
 
             if self.dlg_eval and i%self.dlg_gap == 0:
                 self.call_dlg(i)
+                
             self.aggregate_parameters()
 
             print("-------------After-------------")
             self.evaluate()
+        
             self.Budget.append(time.time() - s_t)
             print('-'*25, 'time cost', '-'*25, self.Budget[-1])
-            print('-'*25, 'overall time cost', '-'*25, end-begin)
+            
+        end = time.time()
+        print('-'*25, 'overall time cost', '-'*25, end-begin)
 
-            if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
-                break
+            # if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
+            #     break
         print("\nEvaluate global model.")
         self.evaluate()
         print("\nBest test accuracy.")
@@ -214,7 +207,6 @@ class FedAvg(Server):
     def hfu_train(self):
 
         print("Load origin global model")
-
         self.load_init_model()
 
         begin = time.time()
@@ -235,7 +227,7 @@ class FedAvg(Server):
                     client.adatrain()  # 目标客户端
                 else:
                     client.train()  # 剩余客户端
-            end = time.time()
+            
             self.receive_models()
 
             if self.dlg_eval and i % self.dlg_gap == 0:
@@ -246,10 +238,11 @@ class FedAvg(Server):
 
             self.Budget.append(time.time() - s_t)
             print('-' * 25, 'time cost', '-' * 25, self.Budget[-1])
-            print('-' * 25, 'overall time cost', '-' * 25, end - begin)
+        end = time.time()
+        print('-' * 25, 'overall time cost', '-' * 25, end - begin)
 
-            if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
-                break
+            # if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
+            #     break
 
             # # 保存每一轮的全局遗忘模型
             # self.save_ulandcon_model(i)
@@ -271,15 +264,11 @@ class FedAvg(Server):
     def ewc_train(self):
 
         print("\nLoad origin global model")
-
         self.load_model()
 
         for i in range(self.ul_rounds):
-
             s_t = time.time()
-
             self.selected_clients = self.select_target_clients()
-
             self.send_models()
 
             if i % self.eval_gap == 0:
@@ -294,7 +283,7 @@ class FedAvg(Server):
                     client.ewctrain()  # 目标客户端
                 else:
                     client.train()  # 剩余客户端
-                end = time.time()
+                
 
             # 加权聚合,才是的数据量仍然为加权的数据量
             self.receive_models()
@@ -303,15 +292,17 @@ class FedAvg(Server):
                 self.call_dlg(i)
 
             self.aggregate_parameters()
+            
             print("-------------After-------------")
             self.evaluate()
 
             self.Budget.append(time.time() - s_t)
             print('-' * 25, 'time cost', '-' * 25, self.Budget[-1])
-            print('-' * 25, 'overall time cost', '-' * 25, end - begin)
+        end = time.time()
+        print('-' * 25, 'overall time cost', '-' * 25, end - begin)
 
-            if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
-                break
+            # if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
+            #     break
 
         print("\nEvaluate global model.")
         self.evaluate()
@@ -331,15 +322,11 @@ class FedAvg(Server):
     def back_train(self):
 
         print("\nLoad origin global model")
-
         self.load_model()
 
         for i in range(self.ul_rounds):
-
             s_t = time.time()
-
             self.selected_clients = self.select_target_clients()
-
             self.send_models()
 
             if i % self.eval_gap == 0:
@@ -354,7 +341,7 @@ class FedAvg(Server):
                     client.backtrain()  # 目标客户端
                 else:
                     client.train()  # 剩余客户端
-                end = time.time()
+                
 
             # 加权聚合,才是的数据量仍然为加权的数据量
             self.receive_models()
@@ -363,16 +350,17 @@ class FedAvg(Server):
                 self.call_dlg(i)
 
             self.aggregate_parameters()
+            
             print("-------------After-------------")
-
             self.evaluate()
 
             self.Budget.append(time.time() - s_t)
-            print('-' * 25, 'time cost', '-' * 25, end - begin)
             print('-' * 25, 'total time', '-' * 25, self.Budget[-1])
+        end = time.time()
+        print('-' * 25, 'time cost', '-' * 25, end - begin)
 
-            if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
-                break
+            # if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
+            #     break
 
             # # 保存每一轮的全局遗忘模型
             # self.save_ulandcon_model(i)
@@ -394,15 +382,11 @@ class FedAvg(Server):
     def flip_train(self):
 
         print("Load origin global model")
-
         self.load_model()
 
         for i in range(self.ul_rounds):
-
             s_t = time.time()
-
             self.selected_clients = self.select_target_clients()
-
             self.send_models()
 
             if i % self.eval_gap == 0:
@@ -417,7 +401,7 @@ class FedAvg(Server):
                     client.fliptrain()  # 目标客户端
                 else:
                     client.train()  # 剩余客户端
-                end = time.time()
+                
 
             # 加权聚合,才是的数据量仍然为加权的数据量
             self.receive_models()
@@ -426,16 +410,17 @@ class FedAvg(Server):
                 self.call_dlg(i)
 
             self.aggregate_parameters()
+            
             print("-------------After-------------")
-
             self.evaluate()
 
             self.Budget.append(time.time() - s_t)
             print('-' * 25, 'time cost', '-' * 25, self.Budget[-1])
-            print('-' * 25, 'overall time cost', '-' * 25, end - begin)
+        end = time.time()
+        print('-' * 25, 'overall time cost', '-' * 25, end - begin)
 
-            if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
-                break
+            # if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
+            #     break
 
             # # 保存每一轮的全局遗忘模型
             # self.save_ulandcon_model(i)
@@ -454,14 +439,13 @@ class FedAvg(Server):
         # 保存最终全局模型
         self.save_global_model()
 
+    #待整理
     def ul_train(self):
 
         # print("Load origin global model")
-
         self.load_model()
 
         for i in range(self.ul_rounds):
-
             s_t = time.time()
             # self.selected_clients = self.select_clients()
             self.selected_clients = self.select_target_clients()
@@ -480,7 +464,7 @@ class FedAvg(Server):
                     client.ultrain()  # 目标客户端
                 else:
                     client.train()  # 剩余客户端
-                end = time.time()
+                
 
             self.receive_models()
 
@@ -493,10 +477,13 @@ class FedAvg(Server):
             self.evaluate()
             
             self.Budget.append(time.time() - s_t)
-            print('-' * 25, 'time cost', '-' * 25, end - begin)
-            # print('-' * 25, 'total time', '-' * 25, self.Budget[-1])
-            if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
-                break
+            print('-' * 25, 'time cost', '-' * 25, self.Budget[-1])
+            
+        end = time.time()
+        print('-' * 25, 'total time', '-' * 25, end - begin)
+            
+            # if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
+            #     break
 
         # print("\nEvaluate global model.")
         # self.evaluate()

@@ -98,19 +98,19 @@ def run(args):
         # 在剩余数据上微调
         elif args.mode == 2:
             server.con_train()
-        # HFU
-        elif args.mode == 3:
-            server.hfu_train()
-        # SGA-EWC
+        # # HFU ada 快速重训
+        # elif args.mode == 3:
+        #     server.hfu_train()
+        # SGA-EWC 逆梯度商城，弹性权重巩固
         elif args.mode == 4:
             server.ewc_train()
         # Back-importance
         elif args.mode == 5:
             server.back_train()
-        # 对后门数据标签翻转
+        # 对后门数据标签翻转 flip
         elif args.mode == 6:
             server.flip_train()
-        # 对比遗忘
+        # 对比遗忘 cons
         elif args.mode == 7:
             server.ul_train()
         
@@ -126,29 +126,34 @@ if __name__ == "__main__":
     total_start = time.time()
     parser = argparse.ArgumentParser()
     parser.add_argument('-mode', "--mode", type=int, default=0, choices=[0, 1, 2, 3, 4, 5, 6, 7])
+    
     parser.add_argument('-data', "--dataset", type=str, default="cifar10")
     parser.add_argument('-poi', "--poi", type=bool, default=True, help="Poisoned data or not")
     parser.add_argument('-ratio', '--ratio', type=float, default=0.1, help='Poi ratio of training data')
     parser.add_argument('-origin_label','--origin_label', type=int, default=0, help='class of origin label') # 原始标签的数据
     parser.add_argument('-target_label', '--target_label', type=int, default=5, help='class of target label') # 后门的目标标签
     parser.add_argument('-tc', "--target_clients_num", type=int, default= 1, help="number of target clients") # 目标客户端个数
+    parser.add_argument('-nc', "--num_clients", type=int, default=10, help="Total number of clients")
     parser.add_argument('-iid', "--iid", type=bool, default=True, help="IID")
+    
     parser.add_argument('-gr', "--global_rounds", type=int, default=100)
     parser.add_argument('-ur', "--ul_rounds", type=int, default=1) # 遗忘训练的轮次
     parser.add_argument('-cr', "--con_rounds", type=int, default=1) # 继续训练的轮次
     parser.add_argument('-uls', "--ul_epochs", type=int, default=1, help="Multiple unlearning update steps in one local epoch.")
     parser.add_argument('-ls', "--local_epochs", type=int, default=1, help="Multiple update steps in one local epoch.")
     parser.add_argument('-nb', "--num_classes", type=int, default=10)
-    parser.add_argument('-nc', "--num_clients", type=int, default=10, help="Total number of clients")
+    
     parser.add_argument('-go', "--goal", type=str, default="test", help="The goal for this experiment")
     parser.add_argument('-dev', "--device", type=str, default="cuda",choices=["cpu", "cuda"])
     parser.add_argument('-did', "--device_id", type=str, default="0")
     parser.add_argument('-lbs', "--batch_size", type=int, default=128)
     parser.add_argument('-m', "--model", type=str, default="cnn")
+    
     parser.add_argument('-optimizer', '--optimizer', type=str, default='sgd', help="type of optimizer")
     parser.add_argument('-lr', "--local_learning_rate", type=float, default=0.01, help="Local learning rate") #adam选择0.001，sgd选择0.01
     parser.add_argument('-ld', "--learning_rate_decay", type=bool, default=False)
     parser.add_argument('-ldg', "--learning_rate_decay_gamma", type=float, default=0.99)
+    
     parser.add_argument('-algo', "--algorithm", type=str, default="FedAvg")
     parser.add_argument('-jr', "--join_ratio", type=float, default=1.0, help="Ratio of clients per round")
     parser.add_argument('-rjr', "--random_join_ratio", type=bool, default=False, help="Random ratio of clients per round")
@@ -177,6 +182,7 @@ if __name__ == "__main__":
         args.device = "cpu"
     if args.mode != 7:
         print("=" * 50)
+        print("Global round: {}".format(args.global_rounds))
         print("Algorithm: {}".format(args.algorithm))
         print("Local batch size: {}".format(args.batch_size))
         print("Local steps: {}".format(args.local_epochs))
@@ -206,7 +212,7 @@ if __name__ == "__main__":
         print("Poi: {}".format(args.poi))
         print("IID: {}".format(args.iid))
         print("Tau: {}".format(args.tau))
-        print("Mu：{}".format(args.mu))
+        print("Mu: {}".format(args.mu))
         print("=" * 50)
 
     run(args)

@@ -15,7 +15,7 @@ from scipy.stats import wasserstein_distance
 from torch.utils.data import DataLoader, Dataset, TensorDataset
 from sklearn.preprocessing import label_binarize
 from sklearn import metrics
-from utils.data_utils import read_client_data, load_data_from_npz, load_npz, load_eval_data_from_npz
+from utils.data_utils import load_data_from_npz, load_npz, load_eval_data_from_npz
 import torch.nn.init as init
 from collections import defaultdict
 
@@ -58,23 +58,32 @@ class Client(object):
                 break
 
         #是否需要初始值
-        self.train_time_cost = {'num_rounds': 0, 'total_cost': 0.0}
-        self.send_time_cost = {'num_rounds': 0, 'total_cost': 0.0}
+        # self.train_time_cost = {'num_rounds': 0, 'total_cost': 0.0}
+        # self.send_time_cost = {'num_rounds': 0, 'total_cost': 0.0}
 
         # 是否通过参数传递
         self.loss = nn.CrossEntropyLoss()
-        # if self.args.optimizer == 'sgd':
-        #     self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate,
-        #                                 momentum=0.9)
-        # elif self.args.optimizer == 'adam':
-        #     self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate,
-        #                                  weight_decay=1e-4)
-        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=0.9)
-        self.learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
-            optimizer=self.optimizer, 
-            gamma=args.learning_rate_decay_gamma
-        )
+        
+        if self.args.optimizer == 'sgd':
+            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate,
+                                        momentum=0.9)
+        elif self.args.optimizer == 'adam':
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate,
+                                         weight_decay=1e-4)
+        else:
+            raise NotImplementedError
+        
+        
         self.learning_rate_decay = args.learning_rate_decay
+        
+        if self.learning_rate_decay:
+            self.learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                optimizer=self.optimizer, 
+                gamma=args.learning_rate_decay_gamma
+            )
+        else:
+            self.learning_rate_scheduler = None
+        
 
  
     def estimate_parameter_importance(self, trainloader, model):

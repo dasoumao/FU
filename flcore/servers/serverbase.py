@@ -9,7 +9,7 @@ from torch import nn
 from torch.autograd import Variable
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-from utils.data_utils import read_client_data, load_data_from_npz, load_eval_data_from_npz, load_npz
+from utils.data_utils import load_data_from_npz, load_eval_data_from_npz, load_npz
 
 # from utils.dlg import DLG
 
@@ -107,8 +107,8 @@ class Server(object):
             # for client in self.clients:
             start_time = time.time()
             client.set_parameters(self.global_model)
-            client.send_time_cost['num_rounds'] += 1
-            client.send_time_cost['total_cost'] += 2 * (time.time() - start_time)
+            # client.send_time_cost['num_rounds'] += 1
+            # client.send_time_cost['total_cost'] += time.time() - start_time
 
     #待改进
     def receive_models(self):
@@ -232,10 +232,7 @@ class Server(object):
 
     
     # 获取参数， 待优化
-    def basic_train_metrics(self):
-        """
-        基本参数
-        """
+    def train_metrics(self):
         acc_num = []
         num_samples = []
         losses = []

@@ -11,6 +11,14 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from utils.data_utils import load_data_from_npz, load_eval_data_from_npz, load_npz
 
+import torchvision
+from trainmodel.models import *
+from trainmodel.bilstm import *
+from trainmodel.resnet import *
+from trainmodel.alexnet import *
+from trainmodel.mobilenet_v2 import *
+from trainmodel.transformer import *
+
 # from utils.dlg import DLG
 
 torch.manual_seed(42)
@@ -37,7 +45,10 @@ class Server(object):
         self.local_epochs = args.local_epochs
         self.batch_size = args.batch_size
         self.learning_rate = args.local_learning_rate
+        
+        self.model = args.model
         self.global_model = copy.deepcopy(args.model)  # 全局模型
+        
         self.num_clients = args.num_clients
         self.join_ratio = args.join_ratio
         self.random_join_ratio = args.random_join_ratio
@@ -79,6 +90,30 @@ class Server(object):
 
         # self.eval_loader = torch.utils.data.DataLoader(eval_datasets, batch_size=self.batch_size, shuffle=True)
 
+    def get_model(self):
+        if self.model == "cnn": # non-convex
+            if "mnist" == self.dataset:
+                self.model = LeNet().to(self.device)
+            elif "fmnist" == self.dataset:
+                self.model = LeNet().to(self.device)
+            elif "cifar10" == self.dataset:
+                self.model = torchvision.models.resnet18(pretrained=False, num_classes=10).to(self.device)
+            elif "svhn" == self.dataset:
+                self.model = torchvision.models.resnet18(pretrained=False, num_classes=10).to(self.device)
+            elif "stl10" == self.dataset:
+                self.model = torchvision.models.resnet18(pretrained=False, num_classes=10).to(self.device)
+            elif "gtsrb" == self.dataset:
+                self.model = mobilenet_v2(pretrained=False, num_classes=43).to(self.device) 
+            elif "tiny" == self.dataset: 
+                self.model = torchvision.models.resnet50(pretrained=False, num_classes=200).to(self.device)
+            elif "cifar100" == self.dataset:
+                self.model = torchvision.models.resnet34(pretrained=False, num_classes=100).to(self.device) 
+            else:
+                raise NotImplementedError
+        else:
+            raise NotImplementedError
+        
+    
     def set_clients(self, clientObj):
         for i in range(self.num_clients):
             train_data = load_data_from_npz(self.dataset, i)

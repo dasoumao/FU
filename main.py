@@ -7,18 +7,10 @@ import os
 import time
 import warnings
 import numpy as np
-import torchvision
 from flcore.servers.serveravg import FedAvg
-from flcore.trainmodel.models import *
-from flcore.trainmodel.bilstm import *
-from flcore.trainmodel.resnet import *
-from flcore.trainmodel.alexnet import *
-from flcore.trainmodel.mobilenet_v2 import *
-from flcore.trainmodel.transformer import *
+
 from utils.result_utils import average_data
 from utils.mem_utils import MemReporter
-from utils.data_utils import get_dataset
-import torchvision.models as models
 import logging
 
 logger = logging.getLogger()
@@ -47,27 +39,6 @@ def run(args):
         if args.mode != 7:
             print(f"\n============= Running time: {i}th =============")
         start = time.time()
-        if model_str == "cnn": # non-convex
-            if "mnist" == args.dataset:
-                args.model = LeNet().to(args.device)
-            elif "fmnist" == args.dataset:
-                args.model = LeNet().to(args.device)
-            elif "cifar10" == args.dataset:
-                args.model = torchvision.models.resnet18(pretrained=False, num_classes=10).to(args.device)
-            elif "svhn" == args.dataset:
-                args.model = torchvision.models.resnet18(pretrained=False, num_classes=10).to(args.device)
-            elif "stl10" == args.dataset:
-                args.model = torchvision.models.resnet18(pretrained=False, num_classes=10).to(args.device)
-            elif "gtsrb" == args.dataset:
-                args.model = mobilenet_v2(pretrained=False, num_classes=43).to(args.device) 
-            elif "tiny" == args.dataset: 
-                args.model = torchvision.models.resnet50(pretrained=False, num_classes=200).to(args.device)
-            elif "cifar100" == args.dataset:
-                args.model = torchvision.models.resnet34(pretrained=False, num_classes=100).to(args.device) 
-            else:
-                raise NotImplementedError
-        else:
-            raise NotImplementedError
 
         if args.algorithm == "FedAvg":
             args.head = copy.deepcopy(args.model.fc)

@@ -40,11 +40,7 @@ def run(args):
             print(f"\n============= Running time: {i}th =============")
         start = time.time()
 
-        if args.algorithm == "FedAvg":
-            args.head = copy.deepcopy(args.model.fc)
-            args.model.fc = nn.Identity()
-            args.model = BaseHeadSplit(args.model, args.head)
-            
+        if args.algorithm == "FedAvg":            
             #选择算法
             server = FedAvg(args, i)
         else:
@@ -89,7 +85,7 @@ def run(args):
 
     # print(f"\nAverage time cost: {round(np.average(time_list), 2)}s.")
     # Global average
-    # average_data(dataset=args.dataset, algorithm=args.algorithm, goal=args.goal, times=args.times)
+    # average_data(dataset=args.dataset, algorithm=args.algorithm, times=args.times)
     # print("All done!")
     # reporter.report()
 
@@ -114,7 +110,6 @@ if __name__ == "__main__":
     parser.add_argument('-ls', "--local_epochs", type=int, default=1, help="Multiple update steps in one local epoch.")
     parser.add_argument('-nb', "--num_classes", type=int, default=10)
     
-    parser.add_argument('-go', "--goal", type=str, default="test", help="The goal for this experiment")
     parser.add_argument('-dev', "--device", type=str, default="cuda",choices=["cpu", "cuda"])
     parser.add_argument('-did', "--device_id", type=str, default="0")
     parser.add_argument('-lbs', "--batch_size", type=int, default=128)
@@ -138,8 +133,7 @@ if __name__ == "__main__":
     parser.add_argument('-bnpc', "--batch_num_per_client", type=int, default=2)
     parser.add_argument('-nnc', "--num_new_clients", type=int, default=0)
     parser.add_argument('-fte', "--fine_tuning_epoch", type=int, default=0)
-    parser.add_argument('-dp', "--privacy", type=bool, default=False, help="differential privacy")
-    parser.add_argument('-dps', "--dp_sigma", type=float, default=0.0)
+
     # 超参数
     parser.add_argument('-alpha', "--alpha", type=float, default=0.0001, help="Regularization weight")  # 文章中一般设置0.01
     parser.add_argument('-beta', "--beta", type=float, default=1.0, help="Ewc weight")
@@ -166,9 +160,6 @@ if __name__ == "__main__":
         print("Clients randomly join: {}".format(args.random_join_ratio))
         print("Running times: {}".format(args.times))
         print("Using device: {}".format(args.device))
-        print("Using DP: {}".format(args.privacy))
-        if args.privacy:
-            print("Sigma for DP: {}".format(args.dp_sigma))
         if args.device == "cuda":
             print("Cuda device id: {}".format(os.environ["CUDA_VISIBLE_DEVICES"]))
         print("DLG attack: {}".format(args.dlg_eval))

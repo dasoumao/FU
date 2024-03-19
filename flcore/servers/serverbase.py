@@ -11,13 +11,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from utils.data_utils import load_data_from_npz, load_eval_data_from_npz, load_npz
 
-import torchvision
-from trainmodel.models import *
-from trainmodel.bilstm import *
-from trainmodel.resnet import *
-from trainmodel.alexnet import *
-from trainmodel.mobilenet_v2 import *
-from trainmodel.transformer import *
+
 
 # from utils.dlg import DLG
 
@@ -47,20 +41,34 @@ class Server(object):
         self.learning_rate = args.local_learning_rate
         
         self.model = args.model
-        self.global_model = copy.deepcopy(args.model)  # 全局模型
+        self.algorithm = args.algorithm
+        self.global_model = None  # 全局模型, 用于存储，实现的server必须进行初始化
         
+        self.eval_gap = args.eval_gap
         self.num_clients = args.num_clients
         self.join_ratio = args.join_ratio
         self.random_join_ratio = args.random_join_ratio
         self.num_join_clients = int(self.num_clients * self.join_ratio)
         self.current_num_join_clients = self.num_join_clients
-        self.algorithm = args.algorithm
-        self.goal = args.goal
+        
+        
+        
         self.save_folder_name = args.save_folder_name
         self.top_cnt = 100
         self.auto_break = args.auto_break
         self.target_num = args.target_clients_num  # 目标客户端数量
 
+        self.times = times
+
+        self.dlg_eval = args.dlg_eval
+        self.dlg_gap = args.dlg_gap
+        self.batch_num_per_client = args.batch_num_per_client
+
+        self.num_new_clients = args.num_new_clients
+        self.new_clients = []
+        self.eval_new_clients = False
+        self.fine_tuning_epoch = args.fine_tuning_epoch
+        
         self.target_id = []  # 目标客户端id
         self.clients = []
 
@@ -75,43 +83,9 @@ class Server(object):
         self.rs_target_acc = []
         self.rs_remain_acc = []
         self.rs_test_loss = []
-
-        self.times = times
-        self.eval_gap = args.eval_gap
-
-        self.dlg_eval = args.dlg_eval
-        self.dlg_gap = args.dlg_gap
-        self.batch_num_per_client = args.batch_num_per_client
-
-        self.num_new_clients = args.num_new_clients
-        self.new_clients = []
-        self.eval_new_clients = False
-        self.fine_tuning_epoch = args.fine_tuning_epoch
-
         # self.eval_loader = torch.utils.data.DataLoader(eval_datasets, batch_size=self.batch_size, shuffle=True)
 
-    def get_model(self):
-        if self.model == "cnn": # non-convex
-            if "mnist" == self.dataset:
-                self.model = LeNet().to(self.device)
-            elif "fmnist" == self.dataset:
-                self.model = LeNet().to(self.device)
-            elif "cifar10" == self.dataset:
-                self.model = torchvision.models.resnet18(pretrained=False, num_classes=10).to(self.device)
-            elif "svhn" == self.dataset:
-                self.model = torchvision.models.resnet18(pretrained=False, num_classes=10).to(self.device)
-            elif "stl10" == self.dataset:
-                self.model = torchvision.models.resnet18(pretrained=False, num_classes=10).to(self.device)
-            elif "gtsrb" == self.dataset:
-                self.model = mobilenet_v2(pretrained=False, num_classes=43).to(self.device) 
-            elif "tiny" == self.dataset: 
-                self.model = torchvision.models.resnet50(pretrained=False, num_classes=200).to(self.device)
-            elif "cifar100" == self.dataset:
-                self.model = torchvision.models.resnet34(pretrained=False, num_classes=100).to(self.device) 
-            else:
-                raise NotImplementedError
-        else:
-            raise NotImplementedError
+    
         
     
     def set_clients(self, clientObj):
@@ -140,8 +114,8 @@ class Server(object):
         assert (len(self.clients) > 0), "Set client first!"
         for client in self.selected_clients:
             # for client in self.clients:
-            start_time = time.time()
-            client.set_parameters(self.global_model)
+            # start_time = time.time()
+            client.set_parameters(self.global_model.state_dict())
             # client.send_time_cost['num_rounds'] += 1
             # client.send_time_cost['total_cost'] += time.time() - start_time
 
@@ -155,7 +129,7 @@ class Server(object):
             tot_samples += client.train_samples
             self.uploaded_ids.append(client.id)
             self.uploaded_weights.append(client.train_samples)
-            self.uploaded_models.append(client.model)
+            self.uploaded_models.append(client.client_model)
         for i, w in enumerate(self.uploaded_weights):
             self.uploaded_weights[i] = w / tot_samples
 
@@ -185,7 +159,7 @@ class Server(object):
             os.makedirs(model_path)
         model_path = os.path.join(model_path, str(self.mode) + "_" + self.algorithm + "_server" + "_" + 
                                   str(self.args.target_label) + "_" + str(self.args.poi) + ".pt")
-        torch.save(self.global_model, model_path)
+        torch.save(self.global_model.state_dict(), model_path)
 
     def save_init_global_model(self):
         model_path = os.path.join("models", self.dataset)
@@ -193,21 +167,27 @@ class Server(object):
             os.makedirs(model_path)
         model_path = os.path.join(model_path, "init" + "_" + self.algorithm + "_server" + "_" + 
                                   str(self.args.target_label) + "_" + str(self.args.poi) + ".pt")
-        torch.save(self.global_model, model_path)
+        torch.save(self.global_model.state_dict(), model_path)
 
     def load_model(self):
+        '''
+        return a state dict
+        '''
         model_path = os.path.join("models", self.dataset)
         model_path = os.path.join(model_path, str(0) + "_" + self.algorithm + "_server" + "_" + 
                                   str(self.args.target_label) + "_" + str(self.args.poi) + ".pt")
         assert (os.path.exists(model_path))
-        self.global_model = torch.load(model_path).to(self.device)
+        return torch.load(model_path)
 
     def load_init_model(self):
+        '''
+        return a state dict
+        '''
         model_path = os.path.join("models", self.dataset)
         model_path = os.path.join(model_path, "init" + "_" + self.algorithm + "_server" + "_" + 
                                   str(self.args.target_label) + "_" + str(self.args.poi) + ".pt")
         assert (os.path.exists(model_path))
-        self.global_model = torch.load(model_path).to(self.device)
+        return torch.load(model_path)
 
     def model_exists(self):
         model_path = os.path.join("models", self.dataset)
@@ -218,7 +198,7 @@ class Server(object):
     def save_results(self):
         assert(len(self.rs_test_acc)>0)
         
-        path = self.dataset + "_" + self.algorithm + "_" + self.goal + "_" + str(self.times)
+        path = self.dataset + "_" + self.algorithm + "_" + str(self.mode) + "_" + str(self.times)
         result_path = "../results/"
         
         if not os.path.exists(result_path):

@@ -7,6 +7,10 @@ from flcore.servers.serverbase import Server
 from threading import Thread
 from utils.data_utils import load_poidata
 import logging
+import copy
+
+
+from ..trainmodel import get_model
 
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
@@ -26,6 +30,8 @@ class FedAvg(Server):
         self.set_clients(clientAVG)
         # 设置投毒客户端id
         self.set_target_clients()
+        # 初始化全局模型
+        self.global_model = get_model(self.model, self.dataset, self.algorithm)
         
         if self.args.mode != 7:
             print("Create server and clients.")
@@ -46,6 +52,7 @@ class FedAvg(Server):
             s_t = time.time()
             # 选择参与训练的模型
             self.select_clients()
+            
             self.send_models()
 
             if i%self.eval_gap == 0:
@@ -85,7 +92,7 @@ class FedAvg(Server):
         print("\nBest target accuracy.")
         print(max(self.rs_target_acc))
         print("\nAverage time cost per round.")
-        print(sum(self.time_record[1:])/len(self.time_record[1:]))
+        print(sum(self.time_record)/len(self.time_record))
 
         self.save_results()
         self.save_global_model()
@@ -95,7 +102,7 @@ class FedAvg(Server):
         重新训练
         '''
         # 加载保存的初始化模型
-        self.load_init_model()
+        self.global_model.load_state_dict(self.load_init_model())
         
         begin = time.time()
         for i in range(self.global_rounds+1):
@@ -139,7 +146,7 @@ class FedAvg(Server):
         print("\nBest target accuracy.")
         print(max(self.rs_target_acc))
         print("\nAverage time cost per round.")
-        print(sum(self.time_record[1:])/len(self.time_record[1:]))
+        print(sum(self.time_record)/len(self.time_record))
 
         self.save_results()
         self.save_global_model()
@@ -149,11 +156,12 @@ class FedAvg(Server):
         干净数据上继续训练
         '''
         print("Load poi global model")
-        self.load_model()
+        self.global_model.load_state_dict(self.load_model())
         
         # 在干净数据上继续微调
         for i in range(self.con_rounds):
             s_t = time.time()
+            begin = time.time()
             self.selected_clients = self.select_clients()
             self.send_models()
 
@@ -161,7 +169,7 @@ class FedAvg(Server):
                 print(f"\n-------------Con Round number: {i+1}-------------")
                 print("\nEvaluate global model")
                 self.evaluate()
-            begin = time.time()
+            
             for client in self.selected_clients:
                 print(f"-----------client {client.id} starts training----------")
                 if client.id in self.target_id:
@@ -197,7 +205,7 @@ class FedAvg(Server):
         print("\nBest target accuracy.")
         print(max(self.rs_target_acc))
         print("\nAverage time cost per round.")
-        print(sum(self.time_record[1:])/len(self.time_record[1:]))
+        print(sum(self.time_record)/len(self.time_record))
 
         self.save_results()
         self.save_global_model()
@@ -205,7 +213,8 @@ class FedAvg(Server):
     def ewc_train(self):
 
         print("\nLoad origin global model")
-        self.load_model()
+        self.global_model.load_state_dict(self.load_model())
+        begin = time.time()
 
         for i in range(self.ul_rounds):
             s_t = time.time()
@@ -219,7 +228,7 @@ class FedAvg(Server):
 
             for client in self.selected_clients:
                 print(f"-----------client {client.id} starts training----------")
-                begin = time.time()
+                
                 if client.id in self.target_id:
                     client.ewctrain()  # 目标客户端
                 else:
@@ -260,7 +269,8 @@ class FedAvg(Server):
     def back_train(self):
 
         print("\nLoad origin global model")
-        self.load_model()
+        self.global_model.load_state_dict(self.load_model())
+        begin = time.time()
 
         for i in range(self.ul_rounds):
             s_t = time.time()
@@ -274,7 +284,7 @@ class FedAvg(Server):
 
             for client in self.selected_clients:
                 print(f"-----------client {client.id} starts training----------")
-                begin = time.time()
+                
                 if client.id in self.target_id:
                     client.backtrain()  # 目标客户端
                 else:
@@ -311,7 +321,7 @@ class FedAvg(Server):
         print("\nBest target accuracy.")
         print(max(self.rs_target_acc))
         # print("\nAverage time cost per round.")
-        # print(sum(self.time_record[1:])/len(self.time_record[1:]))
+        # print(sum(self.time_record)/len(self.time_record))
 
         self.save_results()
         # 保存最终全局模型
@@ -320,7 +330,8 @@ class FedAvg(Server):
     def flip_train(self):
 
         print("Load origin global model")
-        self.load_model()
+        self.global_model.load_state_dict(self.load_model())
+        begin = time.time()
 
         for i in range(self.ul_rounds):
             s_t = time.time()
@@ -334,7 +345,7 @@ class FedAvg(Server):
 
             for client in self.selected_clients:
                 print(f"-----------client {client.id} starts training----------")
-                begin = time.time()
+                
                 if client.id in self.target_id:
                     client.fliptrain()  # 目标客户端
                 else:
@@ -371,7 +382,7 @@ class FedAvg(Server):
         print("\nBest target accuracy.")
         print(max(self.rs_target_acc))
         # print("\nAverage time cost per round.")
-        # print(sum(self.time_record[1:])/len(self.time_record[1:]))
+        # print(sum(self.time_record)/len(self.time_record))
 
         self.save_results()
         # 保存最终全局模型
@@ -381,7 +392,8 @@ class FedAvg(Server):
     def ul_train(self):
 
         # print("Load origin global model")
-        self.load_model()
+        self.global_model.load_state_dict(self.load_model())
+        begin = time.time()
 
         for i in range(self.ul_rounds):
             s_t = time.time()
@@ -397,7 +409,7 @@ class FedAvg(Server):
             for client in self.selected_clients:
                 # print(f"-----------client {client.id} starts training----------")
                 protos = client.test_protos()
-                begin = time.time()
+                
                 if client.id in self.target_id:
                     client.ultrain()  # 目标客户端
                 else:
@@ -432,7 +444,7 @@ class FedAvg(Server):
         # print("\nBest target accuracy.")
         # print(max(self.rs_target_acc))
         # # print("\nAverage time cost per round.")
-        # # print(sum(self.time_record[1:])/len(self.time_record[1:]))
+        # # print(sum(self.time_record)/len(self.time_record))
 
         self.save_results()
         self.save_global_model()

@@ -8,10 +8,10 @@ from torch.autograd import Variable
 from flcore.clients.clientbase import Client
 from torch.utils.data import Dataset, DataLoader
 import torch.nn.functional as F
-from utils.privacy import *
-from utils.privacy import initialize_dp
-from utils.privacy import get_dp_params
 from itertools import cycle
+
+from ..optimizers import get_optimizer
+
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 torch.cuda.manual_seed_all(42)
@@ -33,12 +33,17 @@ class clientAVG(Client):
     #下面的训练流程需要考察
     def train(self):
         trainloader = self.load_train_data()
-        self.model.to(self.device)
-        self.model.train()
+        self.client_model.to(self.device)
+        self.client_model.train()
         
-        if self.privacy:
-            model_origin = copy.deepcopy(self.model)
-            self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer, trainloader, self.dp_sigma)
+        optimizer = get_optimizer(self.optimizer, self.client_model.parameters(), lr=self.learning_rate, momentum=0.9)
+        if self.learning_rate_decay:
+            learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                optimizer=optimizer, 
+                gamma=self.learning_rate_decay_gamma
+            )
+        else:
+            learning_rate_scheduler = None
         
         start_time = time.time()
         for step in range(self.local_epochs):
@@ -49,40 +54,36 @@ class clientAVG(Client):
                 else:
                     x = x.to(self.device)
                 y = y.to(self.device)
-                output = self.model(x)
+                output = self.client_model(x)
                 loss = self.loss(output, y)
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 loss.backward()
-                self.optimizer.step()
+                optimizer.step()
                 
             if self.learning_rate_decay:
-                self.learning_rate_scheduler.step()
+                learning_rate_scheduler.step()
             
         # self.train_time_cost['num_rounds'] += 1
         # self.train_time_cost['total_cost'] += time.time() - start_time
         
-        if self.privacy:
-            eps, DELTA = get_dp_params(privacy_engine)
-            print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
-            for param, param_dp in zip(model_origin.parameters(), self.model.parameters()):
-                param.data = param_dp.data.clone()
-            self.model = model_origin
-            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
-
     def ptrain(self):
         # poi data 生成方式
         trainloader = self.load_poi_data()
-        self.model.to(self.device)
-        self.model.train()
+        self.client_model.to(self.device)
+        self.client_model.train()
+        optimizer = get_optimizer(self.optimizer, self.client_model.parameters(), lr=self.learning_rate, momentum=0.9)
+        if self.learning_rate_decay:
+            learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                optimizer=optimizer, 
+                gamma=self.learning_rate_decay_gamma
+            )
+        else:
+            learning_rate_scheduler = None
         
-        if self.privacy:
-            model_origin = copy.deepcopy(self.model)
-            self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer,
-                                                                                    trainloader, self.dp_sigma)
         start_time = time.time()
         for step in range(self.local_epochs):
             
-            self.model.eval()
+            self.client_model.eval()
             
             for i, (x, y) in enumerate(trainloader):
                 # 是否必要
@@ -91,14 +92,14 @@ class clientAVG(Client):
                 else:
                     x = x.to(self.device)
                 y = y.to(self.device)
-                output = self.model(x)
+                output = self.client_model(x)
                 loss = self.loss(output, y)
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 loss.backward()
-                self.optimizer.step()
+                optimizer.step()
                 
             if self.learning_rate_decay:
-                self.learning_rate_scheduler.step()
+                learning_rate_scheduler.step()
                 
         remain_acc=self.remain_eval()
         print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
@@ -107,24 +108,20 @@ class clientAVG(Client):
         
         # self.train_time_cost['num_rounds'] += 1
         # self.train_time_cost['total_cost'] += time.time() - start_time
-        
-        if self.privacy:
-            eps, DELTA = get_dp_params(privacy_engine)
-            print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
-            for param, param_dp in zip(model_origin.parameters(), self.model.parameters()):
-                param.data = param_dp.data.clone()
-            self.model = model_origin
-            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
 
     def remaintrain(self):
         trainloader = self.load_remain_data()
-        self.model.to(self.device)
-        self.model.train()
+        self.client_model.to(self.device)
+        self.client_model.train()
+        optimizer = get_optimizer(self.optimizer, self.client_model.parameters(), lr=self.learning_rate, momentum=0.9)
+        if self.learning_rate_decay:
+            learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                optimizer=optimizer, 
+                gamma=self.learning_rate_decay_gamma
+            )
+        else:
+            learning_rate_scheduler = None
         
-        if self.privacy:
-            model_origin = copy.deepcopy(self.model)
-            self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer,
-                                                                                    trainloader, self.dp_sigma)
         start_time = time.time()
         for step in range(self.local_epochs):
             for i, (x, y) in enumerate(trainloader):
@@ -134,31 +131,19 @@ class clientAVG(Client):
                 else:
                     x = x.to(self.device)
                 y = y.to(self.device)
-                output = self.model(x)
+                output = self.client_model(x)
                 loss = self.loss(output, y)
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 loss.backward()
-                self.optimizer.step()
+                optimizer.step()
                 
             if self.learning_rate_decay:
-                self.learning_rate_scheduler.step()
+                learning_rate_scheduler.step()
         
-        remain_acc = self.remain_eval()
-        print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
-        target_acc = self.target_eval()
-        print('C{} Target_acc:{:.4f}'.format(self.id, target_acc))
+        
         
         # self.train_time_cost['num_rounds'] += 1
         # self.train_time_cost['total_cost'] += time.time() - start_time
-        
-        if self.privacy:
-            eps, DELTA = get_dp_params(privacy_engine)
-            print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
-            for param, param_dp in zip(model_origin.parameters(), self.model.parameters()):
-                param.data = param_dp.data.clone()
-            self.model = model_origin
-            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
-
 
     def ewctrain(self):
         # 干净的训练数据
@@ -168,18 +153,21 @@ class clientAVG(Client):
         
         w_d = self.ewc()
         
-        self.model.to(self.device)
+        self.client_model.to(self.device)
+        optimizer = get_optimizer(self.optimizer, self.client_model.parameters(), lr=self.learning_rate, momentum=0.9)
+        if self.learning_rate_decay:
+            learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                optimizer=optimizer, 
+                gamma=self.learning_rate_decay_gamma
+            )
+        else:
+            learning_rate_scheduler = None
         # 备份模型
-        self.backup = copy.deepcopy(self.model)
-        self.backup.load_state_dict(self.model.state_dict())
+        self.backup = copy.deepcopy(self.client_model)
+        self.backup.load_state_dict(self.client_model.state_dict())
         
-        self.model.train()  # 初始的全局模型训练模式
-        self.model.to(self.device)
-        
-        if self.privacy:
-            model_origin = copy.deepcopy(self.model)
-            self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer,
-                                                                                    trainloader, self.dp_sigma)
+        self.client_model.train()  # 初始的全局模型训练模式
+        self.client_model.to(self.device)
         
         self.backup.to(self.device)
         self.backup.eval()  # 备份的全局模型评估模式
@@ -207,15 +195,15 @@ class clientAVG(Client):
                 train_y = train_y.to(self.device)
                 poi_y = poi_y.to(self.device)
 
-                train_output = self.model(train_x)  # 干净训练数据的输出
+                train_output = self.client_model(train_x)  # 干净训练数据的输出
                 train_loss = self.loss(train_output, train_y)
 
-                poi_output = self.model(poi_x) 
+                poi_output = self.client_model(poi_x) 
                 poi_loss = - self.loss(poi_output, poi_y) 
                 
                 # losses = []
                 # sum_ewc_loss = 0
-                # for n, p in self.model.named_parameters():
+                # for n, p in self.client_model.named_parameters():
                 #     mean, omega = Variable(mean), Variable(fisher)
                 #     losses.append((omega * (p - mean) ** 2).sum())
                 # sum_ewc_loss += sum(losses)
@@ -223,7 +211,7 @@ class clientAVG(Client):
 
                 # 为了防止过度遗忘，引入正则化项
                 proximal_term = 0.0
-                for (name_model, param_model), (name_backup, param_backup) in zip(self.model.named_parameters(), self.backup.named_parameters()):
+                for (name_model, param_model), (name_backup, param_backup) in zip(self.client_model.named_parameters(), self.backup.named_parameters()):
                     name_model = name_model.replace('_module.', '')  
                     proximal_term +=  torch.sum( w_d[name_model] * (param_backup - param_model) ** 2)
                 reg_loss = (self.beta * 0.5) * proximal_term
@@ -231,10 +219,10 @@ class clientAVG(Client):
                 combined_loss = 0.5*train_loss + (1-0.5)*poi_loss + reg_loss  # 合并两个数据集的损失
                 # combined_loss = poi_loss  # 合并两个数据集的损失
 
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 combined_loss.backward()
-                # torch.nn.utils.clip_grad_norm_(self.model.parameters(), 5, norm_type=2.0, error_if_nonfinite=False)
-                self.optimizer.step()
+                # torch.nn.utils.clip_grad_norm_(self.client_model.parameters(), 5, norm_type=2.0, error_if_nonfinite=False)
+                optimizer.step()
                 print('Idx: %d Train_Loss: %f' % (idx, train_loss.item()))
                 print('Idx: %d POI_Loss: %f' % (idx, poi_loss.item()))
                 print('Idx: %d Reg_Loss: %f' % (idx, reg_loss.item()))
@@ -245,7 +233,7 @@ class clientAVG(Client):
                     break
 
             if self.learning_rate_decay:
-                self.learning_rate_scheduler.step()
+                learning_rate_scheduler.step()
             
             # self.train_time_cost['num_rounds'] += 1
             # self.train_time_cost['total_cost'] += time.time() - start_time
@@ -254,13 +242,6 @@ class clientAVG(Client):
         print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
         target_acc = self.target_eval()
         print('C{} Target_acc:{:.4f}'.format(self.id, target_acc))
-        if self.privacy:
-            eps, DELTA = get_dp_params(privacy_engine)
-            print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
-            for param, param_dp in zip(model_origin.parameters(), self.model.parameters()):
-                param.data = param_dp.data.clone()
-            self.model = model_origin
-            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
 
     def backtrain(self):
         # 干净的训练数据
@@ -268,12 +249,12 @@ class clientAVG(Client):
         # 有毒的训练数据
         poiloader = self.load_target_data()
         # 原始参数的备份
-        origin_params = {n: p.clone().detach() for n, p in self.model.named_parameters()}
+        origin_params = {n: p.clone().detach() for n, p in self.client_model.named_parameters()}
         # 对模型进行深度复制
-        model_for_importance = copy.deepcopy(self.model)
-        # model_for_importance.load_state_dict(self.model.state_dict())
-        model_for_importance1 = copy.deepcopy(self.model)
-        # model_for_importance1.load_state_dict(self.model.state_dict())
+        model_for_importance = copy.deepcopy(self.client_model)
+        # model_for_importance.load_state_dict(self.client_model.state_dict())
+        model_for_importance1 = copy.deepcopy(self.client_model)
+        # model_for_importance1.load_state_dict(self.client_model.state_dict())
         poi_num_samples= len(poiloader)
         remain_num_samples1 = len(trainloader)
         importance1 = self.estimate_parameter_importance(trainloader, model_for_importance1)
@@ -287,12 +268,17 @@ class clientAVG(Client):
                         importance1[keys].max() - importance1[keys].min())
             importance1[keys] = (1 - importance1[keys])
 
-        self.model.to(self.device)
-        self.model.train()  # 初始的全局模型训练模式
-        if self.privacy:
-            model_origin = copy.deepcopy(self.model)
-            self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer,
-                                                                                    trainloader, self.dp_sigma)
+        self.client_model.to(self.device)
+        self.client_model.train()  # 初始的全局模型训练模式
+        optimizer = get_optimizer(self.optimizer, self.client_model.parameters(), lr=self.learning_rate, momentum=0.9)
+        if self.learning_rate_decay:
+            learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                optimizer=optimizer, 
+                gamma=self.learning_rate_decay_gamma
+            )
+        else:
+            learning_rate_scheduler = None
+        
         start_time = time.time()
         poiloader=cycle(poiloader)
 
@@ -318,21 +304,21 @@ class clientAVG(Client):
 
                 train_y = train_y.to(self.device)
                 poi_y = poi_y.to(self.device)
-                train_output = self.model(train_x)  # 干净训练数据的输出
+                train_output = self.client_model(train_x)  # 干净训练数据的输出
                 train_loss = self.loss(train_output, train_y)
-                poi_output = self.model(poi_x)  # 干净训练数据的表征
+                poi_output = self.client_model(poi_x)  # 干净训练数据的表征
                 poi_loss = - self.loss(poi_output, poi_y)  # 计算交叉熵损失 cmi_loss，该损失用于衡量模型的预测与目标标签的差异
                 correct += (torch.sum(torch.argmax(poi_output, dim=1) == poi_y)).item()
                 total += poi_y.size(0)
                 # 为了防止过度遗忘，引入正则化项
                 reg_loss = 0.0
-                for n, p in self.model.named_parameters():
+                for n, p in self.client_model.named_parameters():
                     # print((importance1[n]) * torch.abs(p - origin_params[n]))
                     reg_loss +=  torch.mean((importance1[n]) * torch.abs(p - origin_params[n]))/2
                 combined_loss = 0.5*train_loss + (1-0.5)*poi_loss + reg_loss  # 合并两个数据集的损失
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 combined_loss.backward()
-                self.optimizer.step()
+                optimizer.step()
                 print('Idx: %d Train_Loss: %f' % (idx, train_loss.item()))
                 print('Idx: %d POI_Loss: %f' % (idx, poi_loss.item()))
                 print('Idx: %d Reg_Loss: %f' % (idx, reg_loss.item()))
@@ -343,16 +329,9 @@ class clientAVG(Client):
                     break
 
             if self.learning_rate_decay:
-                self.learning_rate_scheduler.step()
+                learning_rate_scheduler.step()
             # self.train_time_cost['num_rounds'] += 1
             # self.train_time_cost['total_cost'] += time.time() - start_time
-            if self.privacy:
-                eps, DELTA = get_dp_params(privacy_engine)
-                print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
-                for param, param_dp in zip(model_origin.parameters(), self.model.parameters()):
-                    param.data = param_dp.data.clone()
-                self.model = model_origin
-                self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
 
         remain_acc = self.remain_eval()
         print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
@@ -362,12 +341,17 @@ class clientAVG(Client):
     def fliptrain(self):
         # 有毒的训练数据
         poiloader = self.load_target_data()
-        self.model.to(self.device)
-        self.model.train() # 初始的全局模型训练模式
-        if self.privacy:
-            model_origin = copy.deepcopy(self.model)
-            self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer,
-                                                                                    poiloader, self.dp_sigma)
+        self.client_model.to(self.device)
+        self.client_model.train() # 初始的全局模型训练模式
+        optimizer = get_optimizer(self.optimizer, self.client_model.parameters(), lr=self.learning_rate, momentum=0.9)
+        if self.learning_rate_decay:
+            learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                optimizer=optimizer, 
+                gamma=self.learning_rate_decay_gamma
+            )
+        else:
+            learning_rate_scheduler = None
+        
         start_time = time.time()
         for step in range(self.ul_epochs):
             correct = 0
@@ -390,13 +374,13 @@ class clientAVG(Client):
                     poi_y[i] = new_label
                 
                 poi_y = poi_y.to(self.device)
-                poi_rep = self.model.base(poi_x)
-                poi_output = self.model.head(poi_rep)
+                poi_rep = self.client_model.base(poi_x)
+                poi_output = self.client_model.head(poi_rep)
                 poi_loss = self.loss(poi_output, poi_y)
                 combined_loss = poi_loss
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 combined_loss.backward()
-                self.optimizer.step()
+                optimizer.step()
                 print('Idx: %d POI_Loss: %f' % (idx, poi_loss.item()))
                 correct += (torch.sum(torch.argmax(poi_output, dim=1) == poi_y)).item()
                 total += poi_y.size(0)
@@ -404,16 +388,10 @@ class clientAVG(Client):
                 if acc < 0.1:
                     break
             if self.learning_rate_decay:
-                self.learning_rate_scheduler.step()
+                learning_rate_scheduler.step()
             # self.train_time_cost['num_rounds'] += 1
             # self.train_time_cost['total_cost'] += time.time() - start_time
-            if self.privacy:
-                eps, DELTA = get_dp_params(privacy_engine)
-                print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
-                for param, param_dp in zip(model_origin.parameters(), self.model.parameters()):
-                    param.data = param_dp.data.clone()
-                self.model = model_origin
-                self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
+            
 
         remain_acc = self.remain_eval()
         print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))
@@ -423,20 +401,24 @@ class clientAVG(Client):
     def ultrain(self):
         originloader= self.load_origin_clean_target_data()
         trainloader = self.load_remain_data()
-        self.model.to(self.device)
-        self.backup = copy.deepcopy(self.model)
+        self.client_model.to(self.device)
+        self.backup = copy.deepcopy(self.client_model)
         self.backup.to(self.device)
         self.backup.eval() 
-        
-        if self.privacy:
-            model_origin = copy.deepcopy(self.model)
-            self.model, self.optimizer, trainloader, privacy_engine = initialize_dp(self.model, self.optimizer,trainloader, self.dp_sigma)
+        optimizer = get_optimizer(self.optimizer, self.client_model.parameters(), lr=self.learning_rate, momentum=0.9)
+        if self.learning_rate_decay:
+            learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                optimizer=optimizer, 
+                gamma=self.learning_rate_decay_gamma
+            )
+        else:
+            learning_rate_scheduler = None
         
         start_time = time.time()
         for step in range(self.ul_epochs):
-            self.model.train()  # 初始的全局模型训练模式
-            # self.model.apply(self.freeze_norm_stats)
-            self.model.eval()
+            self.client_model.train()  # 初始的全局模型训练模式
+            # self.client_model.apply(self.freeze_norm_stats)
+            self.client_model.eval()
             correct = 0
             total = 0
             cos = torch.nn.CosineSimilarity(dim=-1)  # 计算相似性
@@ -455,13 +437,13 @@ class clientAVG(Client):
 
                 y = y.to(self.device)
 
-                train_rep=self.model.base(train_x)
-                train_output = self.model.head(train_rep)
+                train_rep=self.client_model.base(train_x)
+                train_output = self.client_model.head(train_rep)
                 train_loss = self.loss(train_output, train_y) * (train_x.shape[0] / (train_x.shape[0] + x.shape[0]))
 
                 negative_data= self.add_trigger(x).to(self.device)
-                feature1 = self.model.base(negative_data)  # 有毒数据的特征
-                # poi_output = self.model.head(feature1)
+                feature1 = self.client_model.base(negative_data)  # 有毒数据的特征
+                # poi_output = self.client_model.head(feature1)
                 # proto_new = copy.deepcopy(feature1.detach()) # torch.Size([128, 512])
                 # for i, yy in enumerate(y):
                 #     y_c = yy.item()
@@ -475,8 +457,8 @@ class clientAVG(Client):
                 # print("pre_y: ", torch.argmax(poi_output, dim=1))
                 # print('Idx: %d POI_Loss: %f' % (idx, poi_loss.item()))
                 
-                feature1 = self.model.base(negative_data)
-                poi_output = self.model.head(feature1)
+                feature1 = self.client_model.base(negative_data)
+                poi_output = self.client_model.head(feature1)
                 proto_new = copy.deepcopy(feature1.detach()) # torch.Size([128, 512])
                 for i, yy in enumerate(y):
                     y_c = yy.item()
@@ -495,9 +477,9 @@ class clientAVG(Client):
                 print('Idx: %d POI_Loss: %f' % (idx, poi_loss.item()))
 
                 # # # 写法1
-                # feature1 = self.model.base(negative_data) # 有毒数据的特征
+                # feature1 = self.client_model.base(negative_data) # 有毒数据的特征
                 # feature2 = self.backup.base(x) # 同标签干净测试数据的表征：对主任务的影响较小，干净的测试数据中的相同标签的数据
-                # poi_output = self.model.head(feature1)
+                # poi_output = self.client_model.head(feature1)
                 # posi = cos(feature1, feature2.detach())  # feature2.detach() 将 feature2 从计算图中分离出来，使其不再具有梯度信息。
                 # logits = posi.reshape(-1, 1)  # 创建一个包含两个相似度值的 logits 张量，logits 的形状是 (batch_size, 2)
                 # feature3 = self.backup.base(negative_data)  # 投毒数据的表征 效果最好
@@ -513,30 +495,23 @@ class clientAVG(Client):
                 total += y.size(0)
 
                 proximal_term = 0.0
-                for w, w_t in zip(self.model.parameters(), self.backup.parameters()):
+                for w, w_t in zip(self.client_model.parameters(), self.backup.parameters()):
                     proximal_term +=  0.5 * self.alpha * torch.sum(torch.norm(w - w_t, p=2)) 
                 reg_loss = proximal_term
 
                 combined_loss = train_loss + poi_loss + reg_loss
 
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 combined_loss.backward()
-                self.optimizer.step()
+                optimizer.step()
 
                 # print('Idx: %d Train_Loss: %f' % (idx, train_loss.item()))
                 # print('Idx: %d Reg_Loss: %f' % (idx, reg_loss.item()))
 
             if self.learning_rate_decay:
-                self.learning_rate_scheduler.step()
+                learning_rate_scheduler.step()
             # self.train_time_cost['num_rounds'] += 1
             # self.train_time_cost['total_cost'] += time.time() - start_time
-            if self.privacy:
-                eps, DELTA = get_dp_params(privacy_engine)
-                print(f"Client {self.id}", f"epsilon = {eps:.2f}, sigma = {DELTA}")
-                for param, param_dp in zip(model_origin.parameters(), self.model.parameters()):
-                    param.data = param_dp.data.clone()
-                self.model = model_origin
-                self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate)
     
         # remain_acc = self.remaineval()
         # print('C{} Remain_acc:{:.4f}'.format(self.id, remain_acc))

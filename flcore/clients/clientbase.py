@@ -19,6 +19,9 @@ from utils.data_utils import load_data_from_npz, load_npz, load_eval_data_from_n
 import torch.nn.init as init
 from collections import defaultdict
 
+from ..trainmodel import get_model
+from ..optimizers import get_optimizer
+
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 torch.cuda.manual_seed_all(42)
@@ -32,10 +35,11 @@ class Client(object):
     """
     def __init__(self, args, id, train_samples, **kwargs):
         self.args = args
-        self.model = copy.deepcopy(args.model) #复制全局模型作为本地个性化模型的初始模型
         self.algorithm = args.algorithm
         self.dataset = args.dataset
         self.device = args.device
+        self.model = args.model
+        self.optimizer = args.optimizer
         self.id = id  
         self.save_folder_name = args.save_folder_name
         
@@ -47,62 +51,51 @@ class Client(object):
         self.local_epochs = args.local_epochs
         self.ul_epochs = args.ul_epochs
         self.mode = args.mode
-        self.privacy = args.privacy
-        self.dp_sigma = args.dp_sigma
         self.protos = None
         
-        self.has_BatchNorm = False
-        for layer in self.model.children():
-            if isinstance(layer, nn.BatchNorm2d):
-                self.has_BatchNorm = True
-                break
+        # self.has_BatchNorm = False
+        # for layer in self.model.children():
+        #     if isinstance(layer, nn.BatchNorm2d):
+        #         self.has_BatchNorm = True
+        #         break
 
         #是否需要初始值
         # self.train_time_cost = {'num_rounds': 0, 'total_cost': 0.0}
         # self.send_time_cost = {'num_rounds': 0, 'total_cost': 0.0}
 
         # 是否通过参数传递
+        self.client_model = get_model(self.model, self.dataset, self.algorithm)
+        
         self.loss = nn.CrossEntropyLoss()
         
-        if self.args.optimizer == 'sgd':
-            self.optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate,
-                                        momentum=0.9)
-        elif self.args.optimizer == 'adam':
-            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate,
-                                         weight_decay=1e-4)
-        else:
-            raise NotImplementedError
+       
         
         
         self.learning_rate_decay = args.learning_rate_decay
+        self.learning_rate_decay_gamma = args.learning_rate_decay_gamma
         
-        if self.learning_rate_decay:
-            self.learning_rate_scheduler = torch.optim.lr_scheduler.ExponentialLR(
-                optimizer=self.optimizer, 
-                gamma=args.learning_rate_decay_gamma
-            )
-        else:
-            self.learning_rate_scheduler = None
+        
         
 
  
     def estimate_parameter_importance(self, trainloader, model):
         trainloader = self.load_poi_data()
         importance = dict()
-        for k, p in self.model.named_parameters():
+        for k, p in self.client_model.named_parameters():
             importance[k] = torch.zeros_like(p).to(self.device)
         # 使用eval
         model.eval()
         
         model.to(self.device)
+        optimizer = get_optimizer(self.optimizer, model.parameters(), lr=self.learning_rate, momentum=0.9)
         num_examples = 0
         for image_batch, label_batch in trainloader:
-            image_batch.to(self.device)
-            label_batch.to(self.device)
+            image_batch = image_batch.to(self.device)
+            label_batch = label_batch.to(self.device)
             num_examples += image_batch.size(0)
             output = model(image_batch)
             loss = self.loss(output, label_batch)
-            self.optimizer.zero_grad()
+            optimizer.zero_grad()
             loss.backward()
             for k, p in model.named_parameters():
                 importance[k].add_(p.grad.abs())
@@ -116,7 +109,7 @@ class Client(object):
         teacher_models = []
         for i in range(num_models):
             # 复制全局模型的权重
-            new_model = copy.deepcopy(self.model)
+            new_model = copy.deepcopy(self.client_model)
             # 随机初始化新模型的权重
             for param in new_model.parameters():
                 init.xavier_uniform_(param)
@@ -137,15 +130,15 @@ class Client(object):
 
     def extract_features_from_dataloader(self, data_loader):
         #使用eval
-        self.model.eval()
+        self.client_model.eval()
         
-        self.model.to(self.device)
+        self.client_model.to(self.device)
         all_features = []
         with torch.no_grad():
             for data in data_loader:
                 inputs, _ = data  # 假设 DataLoader 返回的数据是 (inputs, labels) 格式
                 inputs.to(self.device)  # 将数据移到设备上（根据你的设置）
-                features = self.model.base(inputs)
+                features = self.client_model.base(inputs)
                 all_features.append(features.cpu())  # 将特征移动回 CPU（如果需要）
         all_features = torch.cat(all_features, dim=0)
         return all_features
@@ -282,15 +275,15 @@ class Client(object):
             target_data = load_npz(f'./data/{self.dataset}/client_{self.id}_clean_target_{self.args.target_label}_{self.args.ratio}.npz')
         
         testloader = DataLoader(dataset=target_data, batch_size=len(target_data), drop_last=False, shuffle=False)
-        self.model.to(self.device)
-        self.model.eval()
+        self.client_model.to(self.device)
+        self.client_model.eval()
         poi_correct_predictions = 0
         poi_total_samples = 0
         predicted_labels_list = []  # Store predicted labels for each data point
         with torch.no_grad(): 
             for j, (inputs, labels) in enumerate(testloader):
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
-                outputs = self.model(inputs)
+                outputs = self.client_model(inputs)
                 predicted_labels_list.extend(torch.argmax(outputs, dim=1).cpu().numpy())
                 poi_correct_predictions += (torch.sum(torch.argmax(outputs, dim=1) == labels)).item()
                 poi_total_samples += labels.size(0)
@@ -306,21 +299,21 @@ class Client(object):
             remain_data = load_npz(npz_file)
         
         testloader = DataLoader(dataset=remain_data, batch_size=self.batch_size, drop_last=False, shuffle=False)
-        self.model.to(self.device)
-        self.model.eval()
+        self.client_model.to(self.device)
+        self.client_model.eval()
         remain_acc = 0
         remain_num = 0
         with torch.no_grad():
             for j, (inputs, labels) in enumerate(testloader):
                 inputs, labels = inputs.to(self.device), labels.to(self.device)
-                outputs = self.model(inputs)
+                outputs = self.client_model(inputs)
                 remain_acc += (torch.sum(torch.argmax(outputs, dim=1) == labels)).item()
                 remain_num += labels.size(0)
         remain_accuracy = remain_acc * 1.0 / remain_num
         return remain_accuracy
         
-    def set_parameters(self, model):
-        self.model.load_state_dict(model.state_dict())
+    def set_parameters(self, state_dict):
+        self.client_model.load_state_dict(state_dict)
 
     def add_trigger(self, data):
         data = data.detach().cpu().numpy()
@@ -363,19 +356,20 @@ class Client(object):
     def ewc(self):
         trainloader = self.load_poi_data()
         tmp_weights = dict()
-        for k, p in self.model.named_parameters():
+        optimizer = get_optimizer(self.optimizer, self.client_model.parameters(), lr=self.learning_rate, momentum=0.9)
+        for k, p in self.client_model.named_parameters():
             tmp_weights[k] = torch.zeros_like(p).to(self.device)
-        self.model.eval()
-        self.model.to(self.device)
+        self.client_model.eval()
+        self.client_model.to(self.device)
         num_examples = 0
         for image_batch, label_batch in trainloader:
             image_batch, label_batch = image_batch.to(self.device), label_batch.to(self.device)
             num_examples += image_batch.size(0)
-            output = self.model(image_batch)
+            output = self.client_model(image_batch)
             loss = self.loss(output, label_batch)
-            self.optimizer.zero_grad()
+            optimizer.zero_grad()
             loss.backward()
-            for k, p in self.model.named_parameters():
+            for k, p in self.client_model.named_parameters():
                 tmp_weights[k].add_(p.grad.detach() ** 2)
         for k, v in tmp_weights.items():
             tmp_weights[k] = torch.sum(v).div(num_examples)
@@ -389,7 +383,7 @@ class Client(object):
             x = Variable(x).to(self.device)
             y = Variable(y).type(torch.LongTensor).to(self.device)
             loglikelihoods.append(
-                F.log_softmax(self.model(x), dim=1)[range(self.batch_size), y.data])  # self(x) the model's output
+                F.log_softmax(self.client_model(x), dim=1)[range(self.batch_size), y.data])  # self(x) the model's output
             if len(loglikelihoods) >= 2:
                 break
         # estimate the fisher information of the parameters.
@@ -397,14 +391,14 @@ class Client(object):
         loglikelihoods = torch.unbind(torch.cat(loglikelihoods))  # e.g. torch.unbind(torch.tensor([[1, 2, 3],[1, 2, 3]]) -> (tensor([1, 2, 3]), tensor([4, 5, 6]))
         # loglikelihoods = (tensor(1),tensor(2),tensor(3),tensor(1),tensor(2),tensor(3))
         # print('loglikelihoods',loglikelihoods)
-        loglikelihood_grads = zip(*[autograd.grad(l, self.model.parameters(),retain_graph=(i < len(loglikelihoods))) for i, l in enumerate(loglikelihoods, 1)])
+        loglikelihood_grads = zip(*[autograd.grad(l, self.client_model.parameters(),retain_graph=(i < len(loglikelihoods))) for i, l in enumerate(loglikelihoods, 1)])
         print('loglikelihood_grads', loglikelihood_grads)
         loglikelihood_grads = [torch.stack(gs) for gs in loglikelihood_grads]
         print('loglikelihood_grads', loglikelihood_grads)
         fisher_diagonals = [(g ** 2).mean(0) for g in loglikelihood_grads]
-        param_names = [n for n, p in self.model.named_parameters()]
+        param_names = [n for n, p in self.client_model.named_parameters()]
         fisher = {n: f.detach() for n, f in zip(param_names, fisher_diagonals)}
-        mean = {n: p.data for n, p in self.model.named_parameters()}
+        mean = {n: p.data for n, p in self.client_model.named_parameters()}
         return fisher, mean
     def freeze_norm_stats(self, net):
         try:
@@ -418,8 +412,8 @@ class Client(object):
             return
     def train_metrics(self):
         trainloader = self.load_train_data()
-        self.model.eval()
-        self.model.to(self.device)
+        self.client_model.eval()
+        self.client_model.to(self.device)
         train_acc = 0
         train_num = 0
         losses = 0
@@ -430,7 +424,7 @@ class Client(object):
                 else:
                     x = x.to(self.device)
                 y = y.to(self.device)
-                output = self.model(x)
+                output = self.client_model(x)
                 loss = self.loss(output, y)
                 train_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
                 train_num += y.shape[0]
@@ -439,8 +433,8 @@ class Client(object):
 
     def train_poi_metrics(self):
         trainloader = self.load_poi_data()
-        self.model.eval()
-        self.model.to(self.device)
+        self.client_model.eval()
+        self.client_model.to(self.device)
         train_acc = 0
         train_num = 0
         losses = 0
@@ -451,7 +445,7 @@ class Client(object):
                 else:
                     x = x.to(self.device)
                 y = y.to(self.device)
-                output = self.model(x)
+                output = self.client_model(x)
                 loss = self.loss(output, y)
                 train_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
                 train_num += y.shape[0]
@@ -466,8 +460,8 @@ class Client(object):
             npz_file = f'./data/{self.dataset}/client_{self.id}_clean_remain_{self.args.target_label}_{self.args.ratio}.npz'
             remain_data = load_npz(npz_file)
         trainloader = DataLoader(dataset=remain_data, batch_size=self.batch_size, drop_last=False, shuffle=False)
-        self.model.eval()
-        self.model.to(self.device)
+        self.client_model.eval()
+        self.client_model.to(self.device)
         train_acc = 0
         train_num = 0
         losses = 0
@@ -478,7 +472,7 @@ class Client(object):
                 else:
                     x = x.to(self.device)
                 y = y.to(self.device)
-                output = self.model(x)
+                output = self.client_model(x)
                 loss = self.loss(output, y)
                 train_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
                 train_num += y.shape[0]
@@ -511,7 +505,7 @@ class Client(object):
         # 加载测试数据
         dataset = load_eval_data_from_npz(self.dataset)
         testloader = DataLoader(dataset=dataset, batch_size=self.batch_size, drop_last=False, shuffle=False)
-        self.model.eval()
+        self.client_model.eval()
         protos = defaultdict(list)
         with torch.no_grad():
             for i, (x, y) in enumerate(testloader):
@@ -521,7 +515,7 @@ class Client(object):
                     x = x.to(self.device)
                 y = y.to(self.device)
                 # 计算每个数据的表征
-                rep = self.model.base(x)
+                rep = self.client_model.base(x)
                 for i, yy in enumerate(y):
                     y_c = yy.item()
                     protos[y_c].append(rep[i, :].detach().data)
